@@ -55,25 +55,50 @@ def _pad_to(tensor: torch.Tensor, multiple: int = 64) -> tuple[torch.Tensor, int
     return tensor, pad_h, pad_w
 
 
+def _make_weight_mask(h: int, w: int, overlap: int, device, dtype) -> torch.Tensor:
+    """Create a 2D weight mask that feathers from 0 at edges to 1 in the center.
+
+    Uses a cosine ramp over the overlap region so overlapping tiles blend smoothly.
+    """
+    mask_y = torch.ones(h, device=device, dtype=dtype)
+    mask_x = torch.ones(w, device=device, dtype=dtype)
+
+    if overlap > 0 and h > overlap:
+        ramp = 0.5 - 0.5 * torch.cos(
+            torch.linspace(0, torch.pi, overlap, device=device, dtype=dtype)
+        )
+        mask_y[:overlap] = ramp
+        mask_y[-overlap:] = ramp.flip(0)
+
+    if overlap > 0 and w > overlap:
+        ramp = 0.5 - 0.5 * torch.cos(
+            torch.linspace(0, torch.pi, overlap, device=device, dtype=dtype)
+        )
+        mask_x[:overlap] = ramp
+        mask_x[-overlap:] = ramp.flip(0)
+
+    return mask_y.unsqueeze(1) * mask_x.unsqueeze(0)
+
+
 def denoise_tiled(
     model: spandrel.ImageModelDescriptor,
     tensor: torch.Tensor,
     tile_size: int,
-    overlap: int = 32,
+    overlap: int = 64,
 ) -> torch.Tensor:
-    """Process image in overlapping tiles to avoid OOM."""
+    """Process image in overlapping tiles with cosine-feathered blending."""
     _, c, h, w = tensor.shape
     output = torch.zeros_like(tensor)
-    count = torch.zeros(1, 1, h, w, device=tensor.device, dtype=tensor.dtype)
+    weight_sum = torch.zeros(1, 1, h, w, device=tensor.device, dtype=tensor.dtype)
 
-    step = tile_size - overlap * 2
+    step = tile_size - overlap
 
     for y in range(0, h, step):
         for x in range(0, w, step):
-            y1 = max(0, y - overlap)
-            x1 = max(0, x - overlap)
-            y2 = min(h, y1 + tile_size)
-            x2 = min(w, x1 + tile_size)
+            y2 = min(y + tile_size, h)
+            x2 = min(x + tile_size, w)
+            y1 = max(0, y2 - tile_size)
+            x1 = max(0, x2 - tile_size)
 
             tile = tensor[:, :, y1:y2, x1:x2]
             tile, ph, pw = _pad_to(tile)
@@ -81,21 +106,41 @@ def denoise_tiled(
             with torch.no_grad():
                 result = model(tile)
 
-            result = result[:, :, : y2 - y1, : x2 - x1]
+            th, tw = y2 - y1, x2 - x1
+            result = result[:, :, :th, :tw]
 
-            # Crop overlap from edges (except at image borders)
-            ry1 = overlap if y1 > 0 else 0
-            rx1 = overlap if x1 > 0 else 0
-            ry2 = (y2 - y1) - (overlap if y2 < h else 0)
-            rx2 = (x2 - x1) - (overlap if x2 < w else 0)
+            # Build weight mask — full weight in center, feathered at edges
+            # Don't feather at image borders (those edges have no neighbor to blend with)
+            mask = torch.ones(th, tw, device=tensor.device, dtype=tensor.dtype)
+            if overlap > 0:
+                ramp_len = min(overlap, th // 2, tw // 2)
+                if ramp_len > 1:
+                    ramp = 0.5 - 0.5 * torch.cos(
+                        torch.linspace(
+                            0,
+                            torch.pi,
+                            ramp_len,
+                            device=tensor.device,
+                            dtype=tensor.dtype,
+                        )
+                    )
+                    if y1 > 0:
+                        mask[:ramp_len, :] *= ramp[:, None]
+                    if y2 < h:
+                        mask[-ramp_len:, :] *= ramp.flip(0)[:, None]
+                    if x1 > 0:
+                        mask[:, :ramp_len] *= ramp[None, :]
+                    if x2 < w:
+                        mask[:, -ramp_len:] *= ramp.flip(0)[None, :]
 
-            oy1, oy2 = y1 + ry1, y1 + ry2
-            ox1, ox2 = x1 + rx1, x1 + rx2
+            mask = mask.unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
 
-            output[:, :, oy1:oy2, ox1:ox2] = result[:, :, ry1:ry2, rx1:rx2]
-            count[:, :, oy1:oy2, ox1:ox2] = 1.0
+            output[:, :, y1:y2, x1:x2] += result * mask
+            weight_sum[:, :, y1:y2, x1:x2] += mask
 
-    return output
+    # Normalize by accumulated weights
+    weight_sum = torch.clamp(weight_sum, min=1e-8)
+    return output / weight_sum
 
 
 def denoise(
