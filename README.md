@@ -44,7 +44,7 @@ The model is a swappable black box. The actual contribution is the **pipeline**:
 
 ## Comparison
 
-100% crop from a high-ISO Sony ARW (61MP), all exported from darktable with the same base edit settings.
+Crop from a high-ISO Sony A7CR ARW (61MP), all exported from darktable with the same base edit settings.
 
 ### Original (noisy RAW)
 

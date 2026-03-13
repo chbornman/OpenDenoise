@@ -162,7 +162,7 @@ Fixed luma at 0.3, swept chroma: 0.5, 0.7, 0.8, 0.9, 1.0.
 ## Caveats
 
 - All evaluation was visual (eyeballing in darktable), not quantitative.
-- All experiments on a single image from one camera (Sony A7R IV).
+- All experiments on a single image from one camera (Sony A7CR).
 - We don't know how these settings generalize to other cameras, ISOs, or subjects.
 - There may be obvious improvements we're not seeing because of the narrow test set.
 
