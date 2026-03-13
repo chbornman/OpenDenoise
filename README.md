@@ -206,16 +206,6 @@ We denoise *before* demosaicing:
 
 5. **Write DNG** with proper SubIFD structure, CFA tags, color matrices, and metadata that darktable/rawspeed accepts.
 
-### DNG writing (hard-won knowledge)
-
-Getting darktable to actually open the output as a RAW file required figuring out several non-obvious things:
-
-- rawspeed requires SubIFD structure: thumbnail in main IFD (`NewSubfileType=1`), CFA data in SubIFD (`NewSubfileType=0`).
-- No deflate compression for integer data (rawspeed only supports it for float).
-- ColorMatrix1 must be SRATIONAL (type 10), AsShotNeutral must be RATIONAL (type 5). Wrong types = garbled colors.
-- AsShotNeutral is the *inverse* of white balance multipliers, not the multipliers themselves.
-- `rawpy.postprocess()` mutates internal state and corrupts `raw_pattern`. Must extract all metadata first.
-
 ### The model
 
 [SCUNet](https://github.com/cszn/SCUNet) (2022) -- a Swin Transformer + UNet hybrid trained on synthetic noise. Loaded via [spandrel](https://github.com/chaiNNer-org/spandrel). We use the PSNR variant by default.
