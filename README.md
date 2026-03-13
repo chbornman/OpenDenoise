@@ -44,7 +44,7 @@ The model is a swappable black box. The actual contribution is the **pipeline**:
 
 ## Comparison
 
-Crop from a Sony A7CR ARW (61MP, ISO 3200), all exported as PNG from darktable with the same base edit settings.
+Crop from a Sony A7CR ARW (61MP, ISO 3200) shot under mixed lighting (window light and fluorescent conference hall lights), all exported as PNG from darktable with the same base edit settings.
 
 ### Original (noisy RAW)
 
@@ -56,7 +56,7 @@ Visible noise throughout, especially in the background wall and shadows.
 
 ![OpenDenoise base output](comparison/opendenoise_base.png)
 
-Denoised DNG opened in darktable with no additional editing. Noise is reduced while the microphone mesh and fabric texture are preserved. Note: there are slight color shifts -- greens in the shadows and reds shifting slightly toward magenta. These are [known issues](TODO.md#known-color-issues).
+Denoised DNG opened in darktable with no additional editing. Noise is reduced with okay detail retention -- the microphone mesh and fabric texture are preserved, but we think there's a lot of opportunity to improve here. Note: there are slight color shifts -- greens in the shadows and reds shifting slightly toward magenta. These are [known issues](TODO.md#known-color-issues).
 
 ### darktable's built-in denoise (profiled, strength 1.0)
 
