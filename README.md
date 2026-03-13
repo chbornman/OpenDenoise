@@ -156,6 +156,8 @@ Output goes to a `_denoised/` directory next to the input by default.
 
 ## What's been built
 
+Right now this is a **CLI tool only**. Stubs of a darktable Lua plugin exist but are untested.
+
 ### Core pipeline
 
 - **Bayer denoise mode** (the main thing): ARW -> extract Bayer -> pack 2x2 -> denoise -> unpack -> DNG. Outputs valid DNG files that darktable opens with full RAW editing.
