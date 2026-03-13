@@ -36,7 +36,13 @@ class ExperimentConfig:
     model: str = "scunet_color_real_psnr.pth"
 
     # Denoise strength (0.0 = passthrough, 1.0 = full model output)
+    # When luma_strength or chroma_strength are set, this is ignored.
     strength: float = 0.5
+
+    # Separate luma/chroma strength (overrides strength when set)
+    # luma = detail/texture, chroma = color noise
+    luma_strength: float | None = None
+    chroma_strength: float | None = None
 
     # Channel strategy for feeding data to the 3-channel model
     channels: ChannelStrategy = "pseudo_rgb"
@@ -56,7 +62,12 @@ class ExperimentConfig:
         if self.pre != "none":
             parts.append(self.pre)
         parts.append(Path(self.model).stem.replace("scunet_color_real_", ""))
-        parts.append(f"s{int(self.strength * 100)}")
+        if self.luma_strength is not None or self.chroma_strength is not None:
+            ls = int((self.luma_strength or self.strength) * 100)
+            cs = int((self.chroma_strength or self.strength) * 100)
+            parts.append(f"L{ls}C{cs}")
+        else:
+            parts.append(f"s{int(self.strength * 100)}")
         if self.channels != "pseudo_rgb":
             parts.append(self.channels)
         if self.adaptive != "off":
@@ -151,6 +162,65 @@ def compute_strength_map(
         raise ValueError(f"Unknown adaptive mode: {mode}")
 
 
+def blend_luma_chroma(
+    original: np.ndarray,
+    model_output: np.ndarray,
+    config: ExperimentConfig,
+) -> np.ndarray:
+    """Blend model output with original using separate luma/chroma strengths.
+
+    Splits into luminance (Y) and chrominance (Cb, Cr) channels, applies
+    different blend strengths to each, then converts back to RGB.
+
+    This lets you kill color noise aggressively (high chroma_strength)
+    while preserving detail (low luma_strength).
+    """
+    luma_s = (
+        config.luma_strength if config.luma_strength is not None else config.strength
+    )
+    chroma_s = (
+        config.chroma_strength
+        if config.chroma_strength is not None
+        else config.strength
+    )
+
+    # If both are the same, just do a simple blend
+    if luma_s == chroma_s:
+        return np.clip(original * (1 - luma_s) + model_output * luma_s, 0, 1)
+
+    # RGB to YCbCr (BT.601 coefficients, works on linear data too)
+    # Y  =  0.299*R + 0.587*G + 0.114*B
+    # Cb = -0.169*R - 0.331*G + 0.500*B
+    # Cr =  0.500*R - 0.419*G - 0.081*B
+    rgb_to_y = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    rgb_to_cb = np.array([-0.169, -0.331, 0.500], dtype=np.float32)
+    rgb_to_cr = np.array([0.500, -0.419, -0.081], dtype=np.float32)
+
+    # Compute Y, Cb, Cr for both original and model output
+    orig_y = np.sum(original * rgb_to_y, axis=2, keepdims=True)
+    orig_cb = np.sum(original * rgb_to_cb, axis=2, keepdims=True)
+    orig_cr = np.sum(original * rgb_to_cr, axis=2, keepdims=True)
+
+    model_y = np.sum(model_output * rgb_to_y, axis=2, keepdims=True)
+    model_cb = np.sum(model_output * rgb_to_cb, axis=2, keepdims=True)
+    model_cr = np.sum(model_output * rgb_to_cr, axis=2, keepdims=True)
+
+    # Blend luma and chroma separately
+    blended_y = orig_y * (1 - luma_s) + model_y * luma_s
+    blended_cb = orig_cb * (1 - chroma_s) + model_cb * chroma_s
+    blended_cr = orig_cr * (1 - chroma_s) + model_cr * chroma_s
+
+    # YCbCr back to RGB
+    # R = Y + 1.402*Cr
+    # G = Y - 0.344*Cb - 0.714*Cr
+    # B = Y + 1.772*Cb
+    r = blended_y + 1.402 * blended_cr
+    g = blended_y - 0.344 * blended_cb - 0.714 * blended_cr
+    b = blended_y + 1.772 * blended_cb
+
+    return np.clip(np.concatenate([r, g, b], axis=2), 0, 1)
+
+
 # ── Channel strategies ───────────────────────────────────────────────────────
 
 
@@ -187,14 +257,17 @@ def denoise_pseudo_rgb(
     # Post-transform back to linear
     model_output_linear = apply_post_transform(model_output_t, config.pre)
 
-    # Compute strength map (uniform or adaptive)
-    strength_map = compute_strength_map(pseudo_rgb, config.strength, config.adaptive)
-
-    # Blend in linear space
-    denoised_linear = (
-        pseudo_rgb * (1 - strength_map) + model_output_linear * strength_map
-    )
-    denoised_linear = np.clip(denoised_linear, 0, 1)
+    # Blend: separate luma/chroma if configured, else uniform
+    if config.luma_strength is not None or config.chroma_strength is not None:
+        denoised_linear = blend_luma_chroma(pseudo_rgb, model_output_linear, config)
+    else:
+        strength_map = compute_strength_map(
+            pseudo_rgb, config.strength, config.adaptive
+        )
+        denoised_linear = (
+            pseudo_rgb * (1 - strength_map) + model_output_linear * strength_map
+        )
+        denoised_linear = np.clip(denoised_linear, 0, 1)
 
     # Apply corrections back to 4 channels
     return apply_rgb_denoise_to_4ch(packed, denoised_linear, pattern)
@@ -300,17 +373,21 @@ def denoise_rg1b_rg2b(
 
     # Merge model outputs: average R and B from both passes, keep G1/G2 separate
     merged_model = packed.copy()
-    merged_model[:, :, r_idx] = (model1[:, :, 0] + model2[:, :, 0]) / 2
-    merged_model[:, :, g1_idx] = model1[:, :, 1]
-    merged_model[:, :, g2_idx] = model2[:, :, 1]
-    merged_model[:, :, b_idx] = (model1[:, :, 2] + model2[:, :, 2]) / 2
+    # Blend each pass with luma/chroma or uniform strength
+    if config.luma_strength is not None or config.chroma_strength is not None:
+        den1 = blend_luma_chroma(rgb1, model1, config)
+        den2 = blend_luma_chroma(rgb2, model2, config)
+    else:
+        s = config.strength
+        den1 = np.clip(rgb1 * (1 - s) + model1 * s, 0, 1)
+        den2 = np.clip(rgb2 * (1 - s) + model2 * s, 0, 1)
 
-    # Blend with strength (uniform or adaptive)
-    strength_map = compute_strength_map(
-        np.mean(packed, axis=2, keepdims=True), config.strength, config.adaptive
-    )
-    result = packed * (1 - strength_map) + merged_model * strength_map
-    result = np.clip(result, 0, 1)
+    # Merge: average R and B from both passes, keep G1/G2 from respective passes
+    result = packed.copy()
+    result[:, :, r_idx] = (den1[:, :, 0] + den2[:, :, 0]) / 2
+    result[:, :, g1_idx] = den1[:, :, 1]
+    result[:, :, g2_idx] = den2[:, :, 1]
+    result[:, :, b_idx] = (den1[:, :, 2] + den2[:, :, 2]) / 2
 
     return result
 
@@ -520,6 +597,20 @@ Examples:
     parser.add_argument("--model", nargs="+", default=None, help="Model files to test")
     parser.add_argument("--channels", nargs="+", default=None)
     parser.add_argument("--adaptive", nargs="+", default=None)
+    parser.add_argument(
+        "--luma-strength",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Luminance denoise strength (detail)",
+    )
+    parser.add_argument(
+        "--chroma-strength",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Chroma denoise strength (color noise)",
+    )
 
     args = parser.parse_args()
 
@@ -545,6 +636,10 @@ Examples:
             grid["channels"] = args.channels
         if args.adaptive:
             grid["adaptive"] = args.adaptive
+        if args.luma_strength:
+            grid["luma_strength"] = args.luma_strength
+        if args.chroma_strength:
+            grid["chroma_strength"] = args.chroma_strength
 
     if not grid:
         # Default experiment: compare pre-transforms at strength 0.5
