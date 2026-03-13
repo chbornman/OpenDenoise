@@ -178,29 +178,23 @@ def denoise_pseudo_rgb(
     if tile_size is None:
         tile_size = auto_tile_size(packed.shape[0], packed.shape[1], channels=3)
 
-    denoised_t = denoise(
-        model, pseudo_rgb_t, device, config.strength, tile_size, config.fp16
+    # Always get raw model output (strength=1.0), then blend ourselves.
+    # This avoids the fragile undo/redo math for adaptive strength.
+    model_output_t = denoise(
+        model, pseudo_rgb_t, device, strength=1.0, tile_size=tile_size, fp16=config.fp16
     )
 
     # Post-transform back to linear
-    pseudo_rgb_linear = apply_post_transform(pseudo_rgb_t, config.pre)
-    denoised_linear = apply_post_transform(denoised_t, config.pre)
+    model_output_linear = apply_post_transform(model_output_t, config.pre)
 
-    # Adaptive strength: blend in linear space
+    # Compute strength map (uniform or adaptive)
     strength_map = compute_strength_map(pseudo_rgb, config.strength, config.adaptive)
-    if config.adaptive != "off":
-        # Re-blend with adaptive strength (overrides the uniform blend done in engine.denoise)
-        # We need the raw model output, so we undo the engine's strength blend
-        # denoised_t = original_t * (1-s) + model_out * s → model_out = (denoised_t - original_t*(1-s)) / s
-        # Simpler: just re-blend in linear space
-        if config.strength > 0:
-            model_output = (
-                denoised_linear - pseudo_rgb * (1 - config.strength)
-            ) / config.strength
-            model_output = np.clip(model_output, 0, 1)
-            denoised_linear = (
-                pseudo_rgb * (1 - strength_map) + model_output * strength_map
-            )
+
+    # Blend in linear space
+    denoised_linear = (
+        pseudo_rgb * (1 - strength_map) + model_output_linear * strength_map
+    )
+    denoised_linear = np.clip(denoised_linear, 0, 1)
 
     # Apply corrections back to 4 channels
     return apply_rgb_denoise_to_4ch(packed, denoised_linear, pattern)
@@ -224,7 +218,8 @@ def denoise_per_channel(
     if tile_size is None:
         tile_size = auto_tile_size(packed.shape[0], packed.shape[1], channels=3)
 
-    result = packed.copy()
+    # Get raw model output for each channel (strength=1.0)
+    model_output = packed.copy()
     for ch in range(4):
         single = packed[:, :, ch].astype(np.float32)
 
@@ -234,20 +229,23 @@ def denoise_per_channel(
         # Duplicate to 3 channels for the model
         triple = np.stack([single_t, single_t, single_t], axis=2)
 
-        # Denoise
+        # Denoise at full strength
         denoised_triple = denoise(
-            model, triple, device, config.strength, tile_size, config.fp16
+            model, triple, device, strength=1.0, tile_size=tile_size, fp16=config.fp16
         )
 
         # Average the 3 output channels back to 1
         denoised_t = np.mean(denoised_triple, axis=2)
 
         # Post-transform
-        denoised_linear = apply_post_transform(denoised_t, config.pre)
+        model_output[:, :, ch] = apply_post_transform(denoised_t, config.pre)
 
-        result[:, :, ch] = denoised_linear
-
-    return result
+    # Blend with strength (uniform or adaptive)
+    strength_map = compute_strength_map(
+        np.mean(packed, axis=2, keepdims=True), config.strength, config.adaptive
+    )
+    result = packed * (1 - strength_map) + model_output * strength_map
+    return np.clip(result, 0, 1)
 
 
 def denoise_rg1b_rg2b(
@@ -280,27 +278,39 @@ def denoise_rg1b_rg2b(
 
     result = packed.copy()
 
-    # Pass 1: [R, G1, B]
+    # Pass 1: [R, G1, B] — get raw model output (strength=1.0)
     rgb1 = np.stack(
         [packed[:, :, r_idx], packed[:, :, g1_idx], packed[:, :, b_idx]], axis=2
     ).astype(np.float32)
     rgb1_t = apply_pre_transform(rgb1, config.pre)
-    den1_t = denoise(model, rgb1_t, device, config.strength, tile_size, config.fp16)
-    den1 = apply_post_transform(den1_t, config.pre)
+    model1_t = denoise(
+        model, rgb1_t, device, strength=1.0, tile_size=tile_size, fp16=config.fp16
+    )
+    model1 = apply_post_transform(model1_t, config.pre)
 
     # Pass 2: [R, G2, B]
     rgb2 = np.stack(
         [packed[:, :, r_idx], packed[:, :, g2_idx], packed[:, :, b_idx]], axis=2
     ).astype(np.float32)
     rgb2_t = apply_pre_transform(rgb2, config.pre)
-    den2_t = denoise(model, rgb2_t, device, config.strength, tile_size, config.fp16)
-    den2 = apply_post_transform(den2_t, config.pre)
+    model2_t = denoise(
+        model, rgb2_t, device, strength=1.0, tile_size=tile_size, fp16=config.fp16
+    )
+    model2 = apply_post_transform(model2_t, config.pre)
 
-    # Merge: average R and B from both passes, keep G1/G2 from respective passes
-    result[:, :, r_idx] = (den1[:, :, 0] + den2[:, :, 0]) / 2
-    result[:, :, g1_idx] = den1[:, :, 1]
-    result[:, :, g2_idx] = den2[:, :, 1]
-    result[:, :, b_idx] = (den1[:, :, 2] + den2[:, :, 2]) / 2
+    # Merge model outputs: average R and B from both passes, keep G1/G2 separate
+    merged_model = packed.copy()
+    merged_model[:, :, r_idx] = (model1[:, :, 0] + model2[:, :, 0]) / 2
+    merged_model[:, :, g1_idx] = model1[:, :, 1]
+    merged_model[:, :, g2_idx] = model2[:, :, 1]
+    merged_model[:, :, b_idx] = (model1[:, :, 2] + model2[:, :, 2]) / 2
+
+    # Blend with strength (uniform or adaptive)
+    strength_map = compute_strength_map(
+        np.mean(packed, axis=2, keepdims=True), config.strength, config.adaptive
+    )
+    result = packed * (1 - strength_map) + merged_model * strength_map
+    result = np.clip(result, 0, 1)
 
     return result
 
