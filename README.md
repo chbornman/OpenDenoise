@@ -12,6 +12,8 @@ We take an AI denoise model (SCUNet) that was trained on regular sRGB photos, an
 
 The model is a swappable black box. The actual contribution is the **pipeline**: extracting Bayer data, packing it for a 3-channel model, writing valid DNG files that darktable/rawspeed actually accepts (which was harder than the denoising). When better RAW-trained models exist, they drop right in.
 
+Long term, the goal is to compile a dataset of real RAW sensor data (paired noisy/clean captures at different ISOs) and train a model that understands linear Bayer data natively — 4-channel RGGB input, signal-dependent noise, the whole thing. The pipeline is ready for that; it's just the model that's borrowed.
+
 No open-source tool currently does what Lightroom's "AI Denoise" does. This is a rough first pass at filling that gap.
 
 ## What it does
