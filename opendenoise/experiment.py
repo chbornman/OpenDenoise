@@ -429,6 +429,16 @@ def run_grid(
     print(f"Output: {output_base}/")
     print()
 
+    # Copy original RAW to output base for easy comparison
+    import shutil
+
+    original_copy = output_base / "original" / raw_path.name
+    original_copy.parent.mkdir(parents=True, exist_ok=True)
+    if not original_copy.exists():
+        shutil.copy2(raw_path, original_copy)
+        print(f"  Original copied to {original_copy.parent}/")
+        print()
+
     for i, config in enumerate(configs, 1):
         label = config.label()
         print(f"  [{i}/{total}] {label} ...", end=" ", flush=True)
