@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Large files - models and images
+models/*.pth
+models/*.safetensors
+originals/
+denoised/
+experiments/
+*.ARW
+*.arw
+*.dng
+*.DNG
+*.tif
+*.tiff
+*.xmp
