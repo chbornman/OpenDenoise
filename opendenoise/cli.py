@@ -37,6 +37,34 @@ ALL_EXTENSIONS = RAW_EXTENSIONS | POST_EXTENSIONS
 
 DEFAULT_MODEL = Path(__file__).parent.parent / "models" / "scunet_color_real_psnr.pth"
 
+MODEL_URLS = {
+    "scunet_color_real_psnr.pth": "https://github.com/cszn/KAIR/releases/download/v1.0/scunet_color_real_psnr.pth",
+    "scunet_color_real_gan.pth": "https://github.com/cszn/KAIR/releases/download/v1.0/scunet_color_real_gan.pth",
+}
+
+
+def download_models(model_dir: Path | None = None) -> None:
+    """Download default model weights if not already present."""
+    import urllib.request
+
+    if model_dir is None:
+        model_dir = Path(__file__).parent.parent / "models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    for name, url in MODEL_URLS.items():
+        dest = model_dir / name
+        if dest.exists():
+            size_mb = dest.stat().st_size / (1024**2)
+            print(f"  {name} already exists ({size_mb:.0f} MB), skipping")
+            continue
+        print(f"  Downloading {name} ...", end=" ", flush=True)
+        urllib.request.urlretrieve(url, dest)
+        size_mb = dest.stat().st_size / (1024**2)
+        print(f"done ({size_mb:.0f} MB)")
+
+    print()
+    print(f"Models saved to {model_dir}/")
+
 
 def detect_mode(files: list[Path]) -> str:
     """Auto-detect mode based on file extensions."""
@@ -80,9 +108,14 @@ Workflow:
         """,
     )
     parser.add_argument(
+        "--download-models",
+        action="store_true",
+        help="Download default model weights and exit",
+    )
+    parser.add_argument(
         "input",
         type=Path,
-        nargs="+",
+        nargs="*",
         help="Input files or directories",
     )
     parser.add_argument(
@@ -103,8 +136,20 @@ Workflow:
         "-s",
         "--strength",
         type=float,
-        default=0.5,
-        help="Denoise strength 0.0-1.0 (default: 0.5)",
+        default=0.6,
+        help="Denoise strength 0.0-1.0 (default: 0.6)",
+    )
+    parser.add_argument(
+        "--luma-strength",
+        type=float,
+        default=None,
+        help="Luminance denoise strength (default: same as --strength)",
+    )
+    parser.add_argument(
+        "--chroma-strength",
+        type=float,
+        default=None,
+        help="Chroma denoise strength (default: same as --strength)",
     )
     parser.add_argument(
         "--model",
@@ -146,7 +191,17 @@ Workflow:
 
     args = parser.parse_args()
 
+    # Handle --download-models
+    if args.download_models:
+        print("Downloading model weights...")
+        download_models()
+        sys.exit(0)
+
     # Collect input files
+    if not args.input:
+        parser.error(
+            "the following arguments are required: input (or use --download-models)"
+        )
     files = collect_files(args.input)
     if not files:
         print("No supported files found.", file=sys.stderr)
@@ -187,6 +242,10 @@ Workflow:
     # Model check
     if not args.model.exists():
         print(f"Error: Model not found: {args.model}", file=sys.stderr)
+        print(
+            f"Run 'opendenoise --download-models' to fetch default models.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Load model and setup device
@@ -237,17 +296,20 @@ Workflow:
                 args.compression,
             )
         elif mode == "bayer":
-            from .mode_bayer import process_bayer
+            from .experiment import ExperimentConfig, run_experiment
 
-            process_bayer(
-                f,
-                out_path,
-                model,
-                device,
-                args.strength,
-                args.tile,
-                args.fp16,
-                args.gamma,
+            config = ExperimentConfig(
+                strength=args.strength,
+                luma_strength=args.luma_strength,
+                chroma_strength=args.chroma_strength,
+                channels="rg1b_rg2b",
+                pre="gamma" if args.gamma else "none",
+                tile_size=args.tile,
+                fp16=args.fp16,
+                model=args.model.name,
+            )
+            run_experiment(
+                f, out_path.parent, config, model, device, output_path=out_path
             )
         elif mode == "post":
             from .mode_post import process_post

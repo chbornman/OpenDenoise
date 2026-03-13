@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opendenoise"
+version = "0.1.0"
+description = "AI denoising for RAW photography. Outputs DNG files for non-destructive editing in darktable."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Caleb Bornman" },
+]
+keywords = ["denoising", "raw", "photography", "dng", "darktable", "ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Multimedia :: Graphics",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+    "numpy",
+    "rawpy",
+    "tifffile",
+    "imagecodecs",
+    "spandrel",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+# PyTorch must be installed separately — the install command depends on
+# whether you have NVIDIA (CUDA), AMD (ROCm), or CPU-only.
+# See README.md for instructions.
+
+[project.scripts]
+opendenoise = "opendenoise.cli:main"
+
+[project.urls]
+Repository = "https://github.com/chbornman/OpenDenoise"
+
+[tool.setuptools.packages.find]
+include = ["opendenoise*"]

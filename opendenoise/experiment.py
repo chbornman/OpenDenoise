@@ -37,15 +37,15 @@ class ExperimentConfig:
 
     # Denoise strength (0.0 = passthrough, 1.0 = full model output)
     # When luma_strength or chroma_strength are set, this is ignored.
-    strength: float = 0.5
+    strength: float = 0.6
 
     # Separate luma/chroma strength (overrides strength when set)
     # luma = detail/texture, chroma = color noise
-    luma_strength: float | None = None
-    chroma_strength: float | None = None
+    luma_strength: float | None = 0.6
+    chroma_strength: float | None = 0.6
 
     # Channel strategy for feeding data to the 3-channel model
-    channels: ChannelStrategy = "pseudo_rgb"
+    channels: ChannelStrategy = "rg1b_rg2b"
 
     # Noise-adaptive strength
     adaptive: AdaptiveStrength = "off"
@@ -401,8 +401,19 @@ def run_experiment(
     config: ExperimentConfig,
     model=None,
     device=None,
+    output_path: Path | None = None,
 ) -> dict:
-    """Run a single experiment. Returns timing/size info."""
+    """Run a single experiment. Returns timing/size info.
+
+    Args:
+        raw_path: Input RAW file.
+        output_dir: Output directory (used when output_path is None).
+        config: Pipeline configuration.
+        model: Pre-loaded model (loaded from config.model if None).
+        device: Torch device (auto-detected if None).
+        output_path: Explicit output DNG path. If None, uses
+            output_dir / raw_path.stem + ".dng".
+    """
     from .engine import auto_tile_size, get_device, load_model
     from .mode_bayer import (
         extract_bayer,
@@ -454,8 +465,12 @@ def run_experiment(
     bayer_denoised = bayer_denoised * (white - black) + black
 
     # Save
-    output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = (output_dir / raw_path.stem).with_suffix(".dng")
+    if output_path is None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = (output_dir / raw_path.stem).with_suffix(".dng")
+    else:
+        out_path = output_path
+        out_path.parent.mkdir(parents=True, exist_ok=True)
     save_bayer_dng(bayer_denoised, out_path, meta, thumbnail)
 
     elapsed = time.time() - start
