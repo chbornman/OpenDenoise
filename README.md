@@ -42,6 +42,34 @@ We take [SCUNet](https://github.com/cszn/SCUNet) (a denoise model trained on reg
 
 The model is a swappable black box. The actual contribution is the **pipeline**: extracting Bayer data, packing it for a 3-channel model, and writing valid DNG files that darktable/rawspeed actually accepts. That last part -- getting the DNG structure right -- was honestly harder than the denoising. When better models come along (especially ones trained on real RAW data), they drop right in.
 
+## Comparison
+
+100% crop from a high-ISO Sony ARW (61MP), all exported from darktable with the same base edit settings.
+
+### Original (noisy RAW)
+
+![Original noisy RAW](comparison/original_sony_arw.png)
+
+Visible noise throughout, especially in the background wall and shadows.
+
+### OpenDenoise output (DNG, default L60/C60 settings)
+
+![OpenDenoise base output](comparison/opendenoise_base.png)
+
+Denoised DNG opened in darktable with no additional editing. Noise is reduced while the microphone mesh and fabric texture are preserved. Note: there are slight color shifts -- greens in the shadows and reds shifting slightly toward magenta. These are [known issues](TODO.md#known-color-issues).
+
+### darktable's built-in denoise (profiled, strength 1.0)
+
+![darktable denoise module](comparison/darktable_denoise_module_at_1.png)
+
+darktable's own denoise (profiled) module at full strength on the original ARW. Operates post-demosaic, so it's working on different data than OpenDenoise.
+
+### OpenDenoise + darktable editing
+
+![OpenDenoise with darktable editing](comparison/opendenoise_edited_full_image_to_preference.png)
+
+The OpenDenoise DNG edited to preference in darktable (exposure, color, sharpening). Because the output is a real DNG, you have full non-destructive RAW editing -- this is the whole point.
+
 ## Usage
 
 ```bash
