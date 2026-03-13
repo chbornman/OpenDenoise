@@ -10,24 +10,6 @@ It works better than expected, but there's almost certainly low-hanging fruit we
 
 No open-source tool currently does what Lightroom's "AI Denoise" does. This is a rough first pass at filling that gap.
 
-## Quick start
-
-Requires Python 3.11+ and PyTorch. PyTorch must be installed separately because the install command depends on your GPU (NVIDIA/AMD/CPU) -- see [pytorch.org](https://pytorch.org/get-started/locally/).
-
-```bash
-git clone https://github.com/chbornman/OpenDenoise
-cd OpenDenoise
-pip install .
-
-# Download model weights (~70 MB)
-opendenoise --download-models
-
-# Denoise a RAW file -> DNG
-opendenoise photo.ARW --mode bayer
-```
-
-The output DNG opens in darktable with full RAW editing capability -- white balance, exposure, tone curves, everything.
-
 ## Status
 
 **Working prototype.** The core bayer pipeline produces usable results on Sony ARW files. See [What's untested](#whats-untested) for known gaps and [TODO.md](TODO.md) for the full roadmap.
@@ -69,6 +51,24 @@ darktable's own denoise (profiled) module at full strength on the original ARW. 
 ![OpenDenoise with darktable editing](comparison/opendenoise_edited_full_image_to_preference.png)
 
 The OpenDenoise DNG edited to preference in darktable (exposure, color, sharpening). Because the output is a real DNG, you have full non-destructive RAW editing -- this is the whole point.
+
+## Quick start
+
+Requires Python 3.11+ and PyTorch. PyTorch must be installed separately because the install command depends on your GPU (NVIDIA/AMD/CPU) -- see [pytorch.org](https://pytorch.org/get-started/locally/).
+
+```bash
+git clone https://github.com/chbornman/OpenDenoise
+cd OpenDenoise
+pip install .
+
+# Download model weights (~70 MB)
+opendenoise --download-models
+
+# Denoise a RAW file -> DNG
+opendenoise photo.ARW --mode bayer
+```
+
+The output DNG opens in darktable with full RAW editing capability -- white balance, exposure, tone curves, everything.
 
 ## Usage
 
